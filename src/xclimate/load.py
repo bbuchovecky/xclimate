@@ -145,6 +145,8 @@ def load_coupled_fhist_ppe(
     else:
         variables = variable
 
+    xr.set_options(use_new_combine_kwarg_defaults=True)
+
     rootpath = Path("/glade/campaign/univ/uwas0155/ppe/historical/coupled_simulations")
     basename = "f.e21.FHIST_BGC.f19_f19_mg17.historical.coupPPE"
     scomp = CESM2_COMPONENT_MAP[gcomp]
@@ -281,6 +283,8 @@ def load_cesm2le(
         "historical": "BHISTsmbb",
         "ssp370": "BSSP370smbb",
     }
+
+    xr.set_options(use_new_combine_kwarg_defaults=True)
 
     rootdir = Path("/glade/campaign/collections/gdex/data/d651056/CESM2-LE")
 

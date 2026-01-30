@@ -30,7 +30,7 @@ leafcn:
 lmrha:
   max: '24'
   min: '23'
-maximum_leaf_wetted_fraction:
+max_leaf_wet_frac:
   max: '6'
   min: '5'
 medlynintercept:

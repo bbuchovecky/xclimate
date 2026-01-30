@@ -170,10 +170,6 @@ def _configure_panel_axis(
         center_axis_at_zero(ax)
         ax.axhline(lw=0.8, c="k", zorder=0)
 
-    # Color primary y-axis
-    ax.tick_params(axis="y", colors=da_color, which="both")
-    ax.yaxis.label.set_color(da_color)
-
     # Add twin axis if da2 provided
     ax2 = None
     if da2 is not None:
@@ -185,6 +181,10 @@ def _configure_panel_axis(
 
         if center_y:
             center_axis_at_zero(ax2)
+        
+        # Color primary y-axis
+        ax.tick_params(axis="y", colors=da_color, which="both")
+        ax.yaxis.label.set_color(da_color)
 
         # Color secondary y-axis
         ax2.tick_params(axis="y", colors=da2_color, which="both")
@@ -478,4 +478,4 @@ def plot_facetgrid_line(
     # Phase 8: Final layout adjustment
     fig.subplots_adjust(hspace=hspace, bottom=0.1)
 
-    return (fg.fig, fg.axs)
+    return fg.fig, fg.axs

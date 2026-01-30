@@ -39,7 +39,7 @@ def get_member_info(
     inverted = invert_member_id_map(member_id_map)
 
     # Convert all inputs to list
-    if isinstance(member_id, (int, float, str)):
+    if isinstance(member_id, (int, float, str, np.floating, np.integer)):
         member_id = [member_id]
     elif isinstance(member_id, xr.DataArray):
         member_id = member_id.values.flatten()
@@ -48,7 +48,7 @@ def get_member_info(
 
     # Ensure list elements are appropriate type
     member_id = [
-        int(m) if isinstance(m, (float, np.floating)) else m for m in member_id
+        int(m) if isinstance(m, (float, np.floating, np.integer)) else m for m in member_id
     ]
 
     info = []

@@ -1,7 +1,7 @@
 """Plotting utilities for ensemble data."""
 
 from __future__ import annotations
-from typing import Tuple, List, Optional, Union
+from typing import Tuple, List, Optional, Union, Sequence
 
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -25,8 +25,8 @@ def _normalize_ensemble_inputs(
     n_datasets: int,
     member_coord: str | List[str],
     highlight_member: Optional[Union[int, str, List]],
-    violin_settings: Optional[List[dict]],
-) -> Tuple[List[str], List[Optional[Union[int, str]]], List[Optional[dict]]]:
+    violin_settings: Optional[Union[dict, List[dict]]],
+) -> Tuple[List[str], List[Optional[Union[int, str]]], Sequence[Optional[dict]]]:
     """
     Normalize ensemble input parameters to consistent list format.
 
@@ -38,7 +38,7 @@ def _normalize_ensemble_inputs(
         Member coordinate name(s)
     highlight_member : int, str, List, or None
         Member(s) to highlight
-    violin_settings : List[dict] or None
+    violin_settings : dict or List[dict] or None
         Violin plot settings for each dataset
 
     Returns
@@ -54,20 +54,24 @@ def _normalize_ensemble_inputs(
         member_coords = member_coord
 
     # Normalize highlight_member
+    highlight_members: List[Optional[Union[int, str]]]
     if highlight_member is not None:
         if isinstance(highlight_member, list):
             assert len(highlight_member) == n_datasets
             highlight_members = highlight_member
-        elif isinstance(highlight_member, (int, str)):
-            highlight_members = [highlight_member] * n_datasets
+        else:
+            highlight_members = [None] * n_datasets
     else:
         highlight_members = [None] * n_datasets
 
     # Normalize violin_settings
-    if violin_settings is None or len(violin_settings) != n_datasets:
+    violin_settings_list: Sequence[Optional[dict]]
+    if violin_settings is None:
         violin_settings_list = [None] * n_datasets
+    elif isinstance(violin_settings, dict) and len(violin_settings) < n_datasets:
+        violin_settings_list = [violin_settings] * n_datasets
     else:
-        violin_settings_list = violin_settings
+        violin_settings_list = list(violin_settings)
 
     return member_coords, highlight_members, violin_settings_list
 
@@ -102,141 +106,6 @@ def _parse_violin_settings(
         vs.get("marker", "o"),
         vs.get("facecolor", default_color),
         vs.get("edgecolor", default_color),
-    )
-
-
-def _compute_timeseries_data(
-    da: xr.DataArray,
-    weight: xr.DataArray,
-    time_mean_period: slice,
-) -> Tuple[xr.DataArray, xr.DataArray]:
-    """
-    Compute weighted spatial average timeseries and time mean.
-
-    Parameters
-    ----------
-    da : xr.DataArray
-        Input data array with lat, lon, and time dimensions
-    weight : xr.DataArray
-        Weights for spatial averaging
-    time_mean_period : slice
-        Time period for computing the mean
-
-    Returns
-    -------
-    Tuple[xr.DataArray, xr.DataArray]
-        (timeseries, time_mean) - annual timeseries and period mean
-    """
-    # Compute weighted spatial average and annual mean
-    da_ts = da.weighted(weight).mean(dim=["lat", "lon"]).groupby("time.year").mean()
-
-    # Compute time mean over specified period
-    da_tm = (
-        da.sel(time=time_mean_period)
-        .weighted(weight)
-        .mean(dim=["lat", "lon"])
-        .groupby("time.year")
-        .mean()
-        .mean(dim="year")
-    )
-
-    return da_ts, da_tm
-
-
-def _plot_ensemble_members(
-    ax,
-    da_ts: xr.DataArray,
-    member_coord: str,
-    label: str,
-    color: str,
-) -> None:
-    """
-    Plot all ensemble members as transparent lines.
-
-    Parameters
-    ----------
-    ax : matplotlib.axes.Axes
-        Axis to plot on
-    da_ts : xr.DataArray
-        Timeseries data with member dimension
-    member_coord : str
-        Name of member coordinate
-    label : str
-        Label for legend
-    color : str
-        Color for the lines
-    """
-    for i, m in enumerate(da_ts[member_coord]):
-        lab = f"{label} (n={len(da_ts[member_coord])})" if i == 0 else None
-        da_ts.sel({member_coord: m}).plot(
-            ax=ax,
-            color=color,
-            ls="-",
-            alpha=MEMBER_LINE_ALPHA,
-            lw=MEMBER_LINE_WIDTH,
-            label=lab,
-            _labels=False,
-        )
-
-
-def _plot_highlighted_member(
-    ax,
-    da_ts: xr.DataArray,
-    da_tm: xr.DataArray,
-    member_coord: str,
-    highlight: Union[int, str],
-    label: str,
-    color: str,
-    vp_xpos: float,
-    vp_marker: str,
-    vp_facecolor: str,
-    vp_edgecolor: str,
-) -> None:
-    """
-    Plot a highlighted ensemble member with bold line and marker.
-
-    Parameters
-    ----------
-    ax : matplotlib.axes.Axes
-        Axis to plot on
-    da_ts : xr.DataArray
-        Timeseries data
-    da_tm : xr.DataArray
-        Time mean data
-    member_coord : str
-        Name of member coordinate
-    highlight : int or str
-        Member to highlight
-    label : str
-        Base label for legend
-    color : str
-        Color for the line
-    vp_xpos : float
-        Violin plot x-position
-    vp_marker : str
-        Marker style
-    vp_facecolor : str
-        Marker face color
-    vp_edgecolor : str
-        Marker edge color
-    """
-    da_ts.sel({member_coord: highlight}).plot(
-        ax=ax,
-        color=color,
-        ls="-",
-        alpha=1,
-        lw=HIGHLIGHT_LINE_WIDTH,
-        label=f"{label} {highlight}",
-        _labels=False,
-    )
-
-    ax.scatter(
-        vp_xpos + HIGHLIGHT_MARKER_OFFSET,
-        da_tm.sel({member_coord: highlight}),
-        s=20,
-        marker=vp_marker,
-        facecolor=vp_facecolor,
-        edgecolor=vp_edgecolor,
     )
 
 
@@ -382,10 +251,358 @@ def _configure_axes(
     return ax2
 
 
+def plot_ensemble_line(
+    das: xr.DataArray | List[xr.DataArray],
+    das_labels: str | List[str],
+    ylabel: str,
+    plot_dim: str,
+    das_violin: Optional[xr.DataArray | List[xr.DataArray]] = None,
+    xlabel: str = "",
+    title: str = "",
+    member_coord: str | List[str] = "member",
+    colors: Optional[List[str]] = None,
+    ylim: Tuple = (None, None),
+    xlim: Tuple = (None, None),
+    highlight_member: Optional[Union[int, str, List]] = None,
+    violin_settings: Optional[Union[dict, List[dict]]] = None,
+    violin_xrange: Optional[Tuple[float, float]] = None,
+    add_legend: bool = True,
+) -> Tuple:
+    """
+    Plot ensemble line plots with optional violin plots.
+
+    This is a pure plotting utility that creates line plots for ensemble data.
+    All data processing (averaging, grouping, selection) should be done before
+    calling this function.
+
+    Parameters
+    ----------
+    das : xr.DataArray or List[xr.DataArray]
+        Single or list of pre-computed xarray DataArrays to plot. Each DataArray
+        should have the plot dimension and a member dimension.
+    das_labels : str or List[str]
+        Labels for each dataset to be shown in the legend.
+    ylabel : str
+        Label for the y-axis.
+    plot_dim : str
+        Dimension to plot along the x-axis (e.g., 'year', 'lat').
+    das_violin : Optional[xr.DataArray | List[xr.DataArray]], optional
+        Single or list of pre-computed data for violin plots. Should have only
+        the member dimension. If None, no violin plots are created. Default is None.
+    xlabel : str, optional
+        Label for the x-axis. Default is empty string.
+    title : str, optional
+        Title for the plot. Default is an empty string.
+    member_coord : str or List[str], optional
+        Name(s) of the ensemble member coordinate dimension. Can be a single string applied
+        to all datasets or a list of strings for each dataset. Default is "member".
+    colors : Optional[List[str]], optional
+        List of colors to use for each dataset. Must have at least as many colors as datasets.
+        If None, uses matplotlib's TABLEAU_COLORS. Default is None.
+    ylim : Tuple, optional
+        Y-axis limits as (min, max). Default is (None, None).
+    xlim : Tuple, optional
+        X-axis limits as (min, max). Default is (None, None).
+    highlight_member : Optional[Union[int, str, List]], optional
+        Ensemble member(s) to highlight with a bold line. Can be a single value applied to
+        all datasets or a list of values for each dataset. Default is None.
+    violin_settings : Optional[Union[dict, List[dict]]], optional
+        List of dictionaries containing violin plot settings for each dataset. If one dictionary
+        is passed, the settings are applied to each violin plot. Each dictionary can contain 'x', 
+        'marker', 'facecolor', and 'edgecolor' keys. Default is None.
+    violin_xrange : Optional[Tuple[float, float]], optional
+        X-axis range to shade for violin plot period (e.g., (1995, 2014) for time period).
+        If None, no shading is added. Default is None.
+    add_legend : bool = True
+        Option to add legend in the upper right corner of the plot. Defaults to True.
+
+    Returns
+    -------
+    Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]
+        A tuple containing the figure and axes objects.
+
+    Notes
+    -----
+    - This is a pure plotting function - all data processing should be done beforehand.
+    - Violin plots show the distribution of ensemble members from das_violin data.
+
+    Examples
+    --------
+    Plot ensemble timeseries with violin plots:
+    >>> # Compute data first
+    >>> da_ts = da.weighted(weights).mean(dim=['lat', 'lon']).groupby('time.year').mean()
+    >>> da_violin = da.sel(time=slice('1995', '2014')).weighted(weights).mean(
+    ...     dim=['lat', 'lon']).groupby('time.year').mean().mean(dim='year')
+    >>> fig, ax = plot_ensemble_line(
+    ...     das=da_ts,
+    ...     das_labels='Model A',
+    ...     ylabel='Temperature [°C]',
+    ...     plot_dim='year',
+    ...     das_violin=da_violin,
+    ...     xlabel='Year',
+    ...     violin_xrange=(1995, 2014)
+    ... )
+
+    Plot ensemble zonal mean without violin plots:
+    >>> # Compute zonal mean first
+    >>> da_zonal = da.weighted(weights).mean(dim=['lon', 'time'])
+    >>> fig, ax = plot_ensemble_line(
+    ...     das=da_zonal,
+    ...     das_labels='Model A',
+    ...     ylabel='Temperature [°C]',
+    ...     plot_dim='lat',
+    ...     xlabel='Latitude'
+    ... )
+    """
+    # Phase 1: Validate inputs and set defaults
+    if colors is None:
+        colors = list(mcolors.TABLEAU_COLORS.keys())
+    
+    # Convert single to list
+    if isinstance(das, xr.DataArray):
+        das = [das]
+    if isinstance(das_labels, str):
+        das_labels = [das_labels]
+    if das_violin is not None and isinstance(das_violin, xr.DataArray):
+        das_violin_list = [das_violin]
+    elif das_violin is None:
+        das_violin_list = [None] * len(das)
+    else:
+        das_violin_list = das_violin
+
+    assert len(das) == len(das_labels)
+    assert len(colors) >= len(das)
+    assert len(das_violin_list) == len(das)
+
+    n = len(das)
+    member_colors = [whiten(c, 0.1) for c in colors]
+
+    # Phase 2: Normalize input parameters
+    member_coords, highlight_members, violin_settings_list = _normalize_ensemble_inputs(
+        n, member_coord, highlight_member, violin_settings
+    )
+
+    # Phase 3: Create figure and optionally add shaded region
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # Add shaded region if violin_xrange is provided
+    if violin_xrange is not None:
+        ax.axvspan(
+            violin_xrange[0],
+            violin_xrange[1],
+            alpha=0.25,
+            facecolor="silver",
+            edgecolor=None,
+        )
+
+    # Phase 4: Plot each dataset
+    vp_xpos = None  # Initialize to track last violin x position
+    for da, da_violin, label, member, highlight, color, mem_color, vs in zip(
+        das,
+        das_violin_list,
+        das_labels,
+        member_coords,
+        highlight_members,
+        colors,
+        member_colors,
+        violin_settings_list,
+    ):
+        # Parse violin settings
+        default_vp_x = da[plot_dim].values[-1] if da_violin is not None else None
+        vp_xpos, vp_marker, vp_facecolor, vp_edgecolor = _parse_violin_settings(
+            vs, color, default_x=default_vp_x if default_vp_x is not None else DEFAULT_VIOLIN_X
+        )
+
+        # Plot all ensemble members
+        for i, m in enumerate(da[member]):
+            lab = f"{label} (n={len(da[member])})" if i == 0 else None
+            da.sel({member: m}).plot(
+                ax=ax,
+                color=mem_color,
+                ls="-",
+                alpha=MEMBER_LINE_ALPHA,
+                lw=MEMBER_LINE_WIDTH,
+                label=lab,
+                _labels=False,
+            )
+
+        # Plot highlighted member if specified
+        if highlight is not None and isinstance(highlight, (int, str)):
+            da.sel({member: highlight}).plot(
+                ax=ax,
+                color=color,
+                ls="-",
+                alpha=1,
+                lw=HIGHLIGHT_LINE_WIDTH,
+                label=f"{label} {highlight}",
+                _labels=False,
+            )
+
+            # Add marker for highlighted member in violin plot
+            if da_violin is not None:
+                ax.scatter(
+                    vp_xpos + HIGHLIGHT_MARKER_OFFSET,
+                    da_violin.sel({member: highlight}),
+                    s=20,
+                    marker=vp_marker,
+                    facecolor=vp_facecolor,
+                    edgecolor=vp_edgecolor,
+                )
+
+        # Add violin plot if data available
+        if da_violin is not None:
+            _create_violin_plot(ax, da_violin, vp_xpos, vp_facecolor, vp_edgecolor)
+
+    # Phase 5: Configure axes and layout
+    # Add legend
+    if add_legend:
+        ax.legend(loc="upper right", ncols=2)
+
+    # Auto-set xlim if not specified
+    final_xlim = xlim
+    da_xmin = das[0][plot_dim].values.min()
+    da_xmax = das[0][plot_dim].values.max()
+    da_xspan = da_xmax - da_xmin
+    if xlim == (None, None):
+        if das_violin is not None and vp_xpos is not None:
+            final_xlim = (da_xmin - da_xspan / 40, vp_xpos + DEFAULT_VIOLIN_WIDTH * 0.75)
+        else:
+            final_xlim = (da_xmin - da_xspan / 40, da_xmax + da_xspan / 40)
+    elif xlim[0] is None:
+        final_xlim = (da_xmin - da_xspan / 40, xlim[1])
+    elif xlim[1] is None:
+        final_xlim = (xlim[0], da_xmax + da_xspan / 40)
+    
+    # Auto-set ylim if not specified and adding legend
+    final_ylim = ylim
+    if add_legend:
+        ymin, ymax = ax.get_ylim()
+        if ylim == (None, None) or ylim[1] is None:
+            final_ylim = (ymin, ymax + (ymax - ymin) / 15)
+
+    _configure_axes(ax, ylabel, xlabel, title, final_xlim, final_ylim)
+    plt.tight_layout()
+
+    return (fig, ax)
+
+
+def plot_ensemble_zonal(
+    das: xr.DataArray | List[xr.DataArray],
+    das_labels: str | List[str],
+    ylabel: str,
+    das_weights: Optional[xr.DataArray | List[xr.DataArray]] = None,
+    xlabel: str = "Latitude",
+    title: str = "",
+    member_coord: str | List[str] = "member",
+    colors: Optional[List[str]] = None,
+    ylim: Tuple = (None, None),
+    xlim: Tuple = (-90, 90),
+    highlight_member: Optional[Union[int, str, List]] = None,
+) -> Tuple:
+    """
+    Plot ensemble zonal mean profiles without violin plots.
+
+    This is a convenience wrapper around plot_ensemble_line for zonal mean plots.
+    It creates a visualization of zonal mean (latitude) profiles for multiple
+    ensemble datasets with individual ensemble members shown as transparent lines and
+    optional highlighted members shown with bold lines.
+
+    Parameters
+    ----------
+    das : xr.DataArray or List[xr.DataArray]
+        Single or list of xarray DataArrays containing the data to plot. Each DataArray should have
+        dimensions including lat, lon, and a member dimension.
+    das_labels : str or List[str]
+        Labels for each dataset to be shown in the legend.
+    ylabel : str
+        Label for the y-axis.
+    das_weights : Optional[xr.DataArray | List[xr.DataArray]], optional
+        Weight array(s) corresponding to each DataArray in `das`, used for weighted
+        averaging over longitude. If None, uniform weights of ones are used. Default is None.
+    xlabel : str, optional
+        Label for the x-axis. Default is "Latitude".
+    title : str, optional
+        Title for the plot. Default is an empty string.
+    member_coord : str or List[str], optional
+        Name(s) of the ensemble member coordinate dimension. Can be a single string applied
+        to all datasets or a list of strings for each dataset. Default is "member".
+    colors : Optional[List[str]], optional
+        List of colors to use for each dataset. Must have at least as many colors as datasets.
+        If None, uses matplotlib's TABLEAU_COLORS. Default is None.
+    ylim : Tuple, optional
+        Y-axis limits as (min, max). Default is (None, None).
+    xlim : Tuple, optional
+        X-axis limits as (min, max). Default is (-90, 90).
+    highlight_member : Optional[Union[int, str, List]], optional
+        Ensemble member(s) to highlight with a bold line. Can be a single value applied to
+        all datasets or a list of values for each dataset. Default is None.
+
+    Returns
+    -------
+    Tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]
+        A tuple containing the figure and axes objects.
+
+    Notes
+    -----
+    - The function performs weighted averaging over the longitude dimension.
+    - If the data has a time dimension, it will be averaged over time as well.
+
+    Examples
+    --------
+    >>> fig, ax = plot_ensemble_zonal(
+    ...     das=[da1, da2],
+    ...     das_labels=['Model A', 'Model B'],
+    ...     ylabel='Temperature [°C]',
+    ...     title='Ensemble Zonal Mean Temperature'
+    ... )
+    """
+    # Convert single to list
+    if isinstance(das, xr.DataArray):
+        das_list = [das]
+    else:
+        das_list = das
+    
+    if isinstance(das_weights, xr.DataArray):
+        das_weights_list = [das_weights]
+    elif das_weights is None:
+        das_weights_list = [xr.ones_like(da.isel({da.dims[0]: 0}, drop=True)) for da in das_list]
+    else:
+        das_weights_list = das_weights
+    
+    # Compute zonal means for each dataset
+    das_zonal = []
+    for da, weight in zip(das_list, das_weights_list):
+        # Determine averaging dimensions
+        avg_dims = ['lon']
+        if 'time' in da.dims:
+            avg_dims.append('time')
+        
+        # Compute weighted zonal mean
+        da_zonal = da.weighted(weight).mean(dim=avg_dims)
+        das_zonal.append(da_zonal)
+    
+    return plot_ensemble_line(
+        das=das_zonal,
+        das_labels=das_labels,
+        ylabel=ylabel,
+        plot_dim='lat',
+        das_violin=None,
+        xlabel=xlabel,
+        title=title,
+        member_coord=member_coord,
+        colors=colors,
+        ylim=ylim,
+        xlim=xlim,
+        highlight_member=highlight_member,
+        violin_settings=None,
+        violin_xrange=None,
+    )
+
+
 def plot_ensemble_timeseries(
-    das: List[xr.DataArray],
-    das_weights: List[xr.DataArray],
-    das_labels: List[str],
+    das: xr.DataArray | List[xr.DataArray],
+    das_weights: xr.DataArray | List[xr.DataArray],
+    das_labels: str | List[str],
     ylabel: str,
     xlabel: str = "Year",
     title: str = "",
@@ -400,19 +617,20 @@ def plot_ensemble_timeseries(
     """
     Plot ensemble timeseries with violin plots showing distribution of time-mean values.
 
-    This function creates a visualization of multiple ensemble timeseries with individual
+    This is a convenience wrapper around plot_ensemble_line for timeseries plots.
+    It creates a visualization of multiple ensemble timeseries with individual
     ensemble members shown as transparent lines, optional highlighted members, and violin
     plots showing the distribution of time-mean values for a specified period.
 
     Parameters
     ----------
-    das : List[xr.DataArray]
-        List of xarray DataArrays containing the timeseries data to plot. Each DataArray
+    das : xr.DataArray or List[xr.DataArray]
+        Single or list of xarray DataArrays containing the timeseries data to plot. Each DataArray
         should have dimensions including time, lat, lon, and a member dimension.
-    das_weights : List[xr.DataArray]
-        List of weight arrays corresponding to each DataArray in `das`, used for weighted
+    das_weights : xr.DataArray or List[xr.DataArray]
+        Weight array(s) corresponding to each DataArray in `das`, used for weighted
         spatial averaging.
-    das_labels : List[str]
+    das_labels : str or List[str]
         Labels for each dataset to be shown in the legend.
     ylabel : str
         Label for the y-axis.
@@ -464,75 +682,56 @@ def plot_ensemble_timeseries(
     ...     title='Ensemble Temperature Timeseries'
     ... )
     """
-    # Phase 1: Validate inputs and set defaults
-    if colors is None:
-        colors = list(mcolors.TABLEAU_COLORS.keys())
-
-    assert len(das) == len(das_weights) and len(das) == len(das_labels)
-    assert len(colors) >= len(das)
-
-    n = len(das)
-    member_colors = [whiten(c, 0.1) for c in colors]
-
-    # Phase 2: Normalize input parameters
-    member_coords, highlight_members, violin_settings_list = _normalize_ensemble_inputs(
-        n, member_coord, highlight_member, violin_settings
-    )
-
-    # Phase 3: Create figure and add time period shading
-    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
-
-    ax.axvspan(
-        int(time_mean_period.start[:4]),
-        int(time_mean_period.stop[:4]),
-        alpha=0.25,
-        facecolor="silver",
-        edgecolor=None,
-    )
-
-    # Phase 4: Plot each dataset
-    for da, weight, label, member, highlight, color, mem_color, vs in zip(
-        das,
-        das_weights,
-        das_labels,
-        member_coords,
-        highlight_members,
-        colors,
-        member_colors,
-        violin_settings_list,
-    ):
-        # Parse violin settings
-        vp_xpos, vp_marker, vp_facecolor, vp_edgecolor = _parse_violin_settings(
-            vs, color
+    # Convert single to list
+    if isinstance(das, xr.DataArray):
+        das_list = [das]
+    else:
+        das_list = das
+    
+    if isinstance(das_weights, xr.DataArray):
+        das_weights_list = [das_weights]
+    else:
+        das_weights_list = das_weights
+    
+    # Compute timeseries and violin data for each dataset
+    das_ts = []
+    das_violin = []
+    for da, weight in zip(das_list, das_weights_list):
+        # Compute weighted spatial average and annual mean
+        da_ts = da.weighted(weight).mean(dim=['lat', 'lon']).groupby('time.year').mean()
+        
+        # Compute time mean over specified period for violin plot
+        da_violin = (
+            da.sel(time=time_mean_period)
+            .weighted(weight)
+            .mean(dim=['lat', 'lon'])
+            .groupby('time.year')
+            .mean()
+            .mean(dim='year')
         )
-
-        # Compute timeseries and time mean
-        da_ts, da_tm = _compute_timeseries_data(da, weight, time_mean_period)
-
-        # Plot all ensemble members
-        _plot_ensemble_members(ax, da_ts, member, label, mem_color)
-
-        # Plot highlighted member if specified
-        if highlight is not None and isinstance(highlight, (int, str)):
-            _plot_highlighted_member(
-                ax,
-                da_ts,
-                da_tm,
-                member,
-                highlight,
-                label,
-                color,
-                vp_xpos,
-                vp_marker,
-                vp_facecolor,
-                vp_edgecolor,
-            )
-
-        # Add violin plot
-        _create_violin_plot(ax, da_tm, vp_xpos, vp_facecolor, vp_edgecolor)
-
-    # Phase 5: Configure axes and layout
-    _configure_axes(ax, ylabel, xlabel, title, xlim, ylim)
-    plt.tight_layout()
-
-    return (fig, ax)
+        
+        das_ts.append(da_ts)
+        das_violin.append(da_violin)
+    
+    # Extract year range for shading
+    violin_xrange = (
+        int(time_mean_period.start[:4]),
+        int(time_mean_period.stop[:4])
+    )
+    
+    return plot_ensemble_line(
+        das=das_ts,
+        das_labels=das_labels,
+        ylabel=ylabel,
+        plot_dim='year',
+        das_violin=das_violin,
+        xlabel=xlabel,
+        title=title,
+        member_coord=member_coord,
+        colors=colors,
+        ylim=ylim,
+        xlim=xlim,
+        highlight_member=highlight_member,
+        violin_settings=violin_settings,
+        violin_xrange=violin_xrange,
+    )

@@ -3,7 +3,7 @@ Dask cluster utility.
 """
 
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, Tuple
 import os
 import time
 import platform
@@ -100,7 +100,7 @@ def create_dask_cluster(
         user = os.environ.get("USER")
         port = cluster.dashboard_link.split(":")[2].split("/")[0]
         address = cluster.dashboard_link.split(":")[1][2:]
-        print("\nTo view the dasl dashboard")
+        print("\nTo view the dask dashboard")
         print("Run the following command in your local terminal:")
         print(
             f"> ssh -N -L {port}:{address}:{port} {user}@{node}.hpc.ucar.edu"
@@ -108,15 +108,15 @@ def create_dask_cluster(
         print("Open the following link in your local browser:")
         print(f"> http://localhost:{port}/status")  # link to local dask dashboard
 
-    return client, cluster
+    return (client, cluster)
 
 
 def close_dask_cluster(
-    client,
-    cluster,
+    client_cluster: Tuple,
     remove_std_files: Optional[bool] = True,
 ) -> None:
     """Close dask cluster and clean up the workspace."""
+    client, cluster = client_cluster
     client.close()
     cluster.close()
     if remove_std_files:
