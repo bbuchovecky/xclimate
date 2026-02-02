@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import List, Sequence
 import warnings
 from pathlib import Path
+from functools import lru_cache
 import re
 
 import numpy as np
@@ -87,6 +88,33 @@ def _filter_files_by_timerange(
         kept.append(f)
 
     return kept
+
+
+@lru_cache(maxsize=1)
+def load_fhist_ppe_grid():
+    path = Path("/glade/campaign/univ/uwas0155/ppe/f.e21.FHIST_BGC.f19_f19_mg17.historical.AREA_GRID.nc")
+    return xr.open_dataset(path)
+
+
+@lru_cache(maxsize=1)
+def load_fhist_variable_dict():
+    path = Path("/glade/u/home/bbuchovecky/pyth/xclimate/dicts/fhist_variables.py")
+
+    # Load the module dynamically
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fhist_variables", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    
+    return module.VARIABLES
+
+
+def load_fhist(name: str, **kwargs) -> xr.Dataset:
+    variable_dict = load_fhist_variable_dict()
+    if name in variable_dict:
+        info = variable_dict[name]
+        return load_coupled_fhist_ppe(info.name, info.gcomp, info.frequency, info.stream, **kwargs)
+    return xr.Dataset()
 
 
 def load_coupled_fhist_ppe(
