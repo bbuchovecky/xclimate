@@ -16,7 +16,7 @@ from dask.distributed import Client, get_client
 def is_dask_available() -> bool:
     """Check if a Dask cluster is running and accessible"""
     try:
-        client = get_client()
+        get_client()
         return True
     except ValueError:
         return False
@@ -122,3 +122,74 @@ def close_dask_cluster(
     if remove_std_files:
         for f in glob("dask-worker.*"):
             os.remove(f)
+
+
+def get_ncpus(default=1) -> int:
+    """
+    Get the number of CPUs available from environment variables.
+    
+    Checks PBS_NCPUS, NCPUS, and OMP_NUM_THREADS environment variables
+    in order, falling back to os.cpu_count() or the default value.
+
+    Parameters
+    ----------
+        default : int
+            Default number of CPUs to return if none can be detected.
+
+    Returns
+    -------
+    int
+        Number of available CPUs.
+    """
+    for k in ("PBS_NCPUS", "NCPUS", "OMP_NUM_THREADS"):
+        v = os.environ.get(k)
+        if v and v.isdigit():
+            return int(v)
+    return os.cpu_count() or default
+
+
+def get_memory_per_worker(n_workers, overhead_fraction=0.1, default="4GB") -> str:
+    """
+    Calculate per-worker memory limit from PBS allocation.
+    
+    Checks PBS environment variables for total memory allocation and divides
+    by number of workers, reserving a fraction for system overhead.
+
+    Parameters
+    ----------
+        n_workers : int
+            Number of Dask workers.
+        overhead_fraction : float
+            Fraction of memory to reserve for system/scheduler (default 10%).
+        default : str
+            Fallback memory limit if PBS memory not detected.
+
+    Returns
+    -------
+    str
+        Memory limit string (e.g., "7GB").
+    """
+    # Try to get total memory from PBS
+    total_mem_kb = None
+    for k in ("PBS_RESC_TOTAL_MEM", "PBS_VMEM", "PBS_MEM"):
+        v = os.environ.get(k)
+        if v:
+            # Parse formats like "64gb", "64000mb", "65536000kb"
+            v_lower = v.lower().strip()
+            if v_lower.endswith("gb"):
+                total_mem_kb = int(float(v_lower[:-2]) * 1024 * 1024)
+            elif v_lower.endswith("mb"):
+                total_mem_kb = int(float(v_lower[:-2]) * 1024)
+            elif v_lower.endswith("kb"):
+                total_mem_kb = int(float(v_lower[:-2]))
+            if total_mem_kb:
+                break
+    
+    if total_mem_kb:
+        # Reserve overhead and divide by workers
+        usable_mem_kb = int(total_mem_kb * (1 - overhead_fraction))
+        per_worker_kb = usable_mem_kb // n_workers
+        per_worker_gb = per_worker_kb / (1024 * 1024)
+        return f"{per_worker_gb:.1f}GB"
+    
+    return default

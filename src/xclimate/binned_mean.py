@@ -20,6 +20,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import xarray as xr
+from numba import jit
+
 
 @dataclass
 class QBinnedMean:
@@ -100,6 +102,37 @@ def get_bins(da: xr.DataArray, da_edge: xr.DataArray) -> xr.DataArray:
     )
 
 
+@jit(nopython=True, cache=True)
+def _binned_mean_numba(
+    Z_flat: np.ndarray, 
+    x_flat: np.ndarray, 
+    y_flat: np.ndarray,
+    xnb: int,
+    ynb: int
+) -> np.ndarray:
+    """Numba-optimized function to compute binned means."""
+    sums = np.zeros((xnb, ynb))
+    counts = np.zeros((xnb, ynb))
+    
+    # Accumulate sums and counts for each bin
+    for i in range(len(Z_flat)):
+        if np.isfinite(Z_flat[i]) and np.isfinite(x_flat[i]) and np.isfinite(y_flat[i]):
+            xi = int(x_flat[i])
+            yi = int(y_flat[i])
+            if 0 <= xi < xnb and 0 <= yi < ynb:
+                sums[xi, yi] += Z_flat[i]
+                counts[xi, yi] += 1
+    
+    # Compute means, setting bins with no data to NaN
+    result = np.full((xnb, ynb), np.nan)
+    for xi in range(xnb):
+        for yi in range(ynb):
+            if counts[xi, yi] > 0:
+                result[xi, yi] = sums[xi, yi] / counts[xi, yi]
+    
+    return result
+
+
 def get_binned_mean2d(
     Z: xr.DataArray,
     xb_bin: xr.DataArray,
@@ -110,7 +143,7 @@ def get_binned_mean2d(
 ) -> xr.DataArray:
     """Compute 2D binned means.
 
-    Computes the mean of Z for each combination of (x_bin, y_bin) indices.
+    Computes the mean of Z for each combination of (ix_bin, iy_bin) indices.
 
     Parameters
     ----------
@@ -130,87 +163,53 @@ def get_binned_mean2d(
     Returns
     -------
     xr.DataArray
-        2D array of binned means with dimensions ('x_bin', 'y_bin').
+        2D array of binned means with dimensions ('ix_bin', 'iy_bin').
         Bins without data are filled with NaN.
 
     Notes
     -----
-    Uses pandas groupby for efficient binned mean computation.
-    Output dimensions are ordered as (x_bin, y_bin) with x_bin varying faster.
+    Uses a numba-JIT-compiled function for efficient computation.
+    Output dimensions are ordered as (ix_bin, iy_bin).
     """
 
-    def _binned_mean_core(
-        Z_data: np.ndarray, x_data: np.ndarray, y_data: np.ndarray
-    ) -> np.ndarray:
-        """Core function to compute binned means."""
-        # Flatten to 1D
-        Z_flat = Z_data.flatten()
-        x_flat = x_data.flatten()
-        y_flat = y_data.flatten()
-
-        # Filter valid values
-        valid_mask = np.isfinite(Z_flat) & np.isfinite(x_flat) & np.isfinite(y_flat)
-
-        if not np.any(valid_mask):
-            # Return NaN array if all invalid
-            return np.full((xnb, ynb), np.nan)
-
-        # Create DataFrame for grouping
-        df = pd.DataFrame(
-            {
-                "Z": Z_flat[valid_mask],
-                "xb": x_flat[valid_mask].astype(int),
-                "yb": y_flat[valid_mask].astype(int),
-            }
-        )
-
-        # Group and compute mean
-        mean_grouped = df.groupby(["xb", "yb"])["Z"].mean()
-
-        # Unstack to 2D (unstack xb so it becomes columns = x-axis)
-        mean_2d = mean_grouped.unstack("xb", fill_value=np.nan)
-
-        # Reindex to ensure full grid (rows=yb, columns=xb)
-        mean_2d = mean_2d.reindex(
-            index=np.arange(ynb), columns=np.arange(xnb), fill_value=np.nan
-        )
-
-        return mean_2d.to_numpy()
-
-    result = xr.apply_ufunc(
-        _binned_mean_core,
+    binned_mean = xr.apply_ufunc(
+        lambda Z_data, x_data, y_data: _binned_mean_numba(
+            Z_data.flatten(), x_data.flatten(), y_data.flatten(), xnb, ynb
+        ),
         Z,
         xb_bin,
         yb_bin,
         input_core_dims=[agg_dims, agg_dims, agg_dims],
-        output_core_dims=[["x_bin", "y_bin"]],
+        output_core_dims=[["ix_bin", "iy_bin"]],
         vectorize=True,
         dask="parallelized",
         output_dtypes=[float],
         dask_gufunc_kwargs={
             "allow_rechunk": True,
             "output_sizes": {
-                "x_bin": xnb,
-                "y_bin": ynb,
+                "ix_bin": xnb,
+                "iy_bin": ynb,
             },
         },
     )
 
-    result = result.assign_coords(
+    binned_mean = binned_mean.assign_coords(
         {
-            "x_bin": np.arange(xnb),
-            "y_bin": np.arange(ynb),
+            "ix_bin": np.arange(xnb),
+            "iy_bin": np.arange(ynb),
         }
     )
-    result.name = "binned_mean"
-    result.attrs = {
+    binned_mean.ix_bin.attrs = {"long_name": "x bin indices"}
+    binned_mean.iy_bin.attrs = {"long_name": "y bin indices"}
+    binned_mean.name = "binned_mean"
+    binned_mean.attrs = {
         "long_name": f"binned mean {Z.name}",
         "units": Z.attrs.get("units", ""),
     }
 
-    return result
+    return binned_mean.T
 
-
+# TODO: check for bugs, implement numba-jit
 def get_binned_mean2d_with_ci(
     Z: xr.DataArray,
     xb_bin: xr.DataArray,
@@ -387,6 +386,21 @@ def get_binned_mean2d_with_ci(
     return mean, ci_lower, ci_upper
 
 
+@jit(nopython=True, cache=True)
+def _hist2d_numba(x_data: np.ndarray, y_data: np.ndarray, xnb: int, ynb: int) -> np.ndarray:
+    """Numba-optimized 2D histogram computation."""
+    hist = np.zeros((xnb, ynb))
+    
+    for i in range(len(x_data)):
+        if np.isfinite(x_data[i]) and np.isfinite(y_data[i]):
+            xi = int(x_data[i])
+            yi = int(y_data[i])
+            if 0 <= xi < xnb and 0 <= yi < ynb:
+                hist[xi, yi] += 1
+    
+    return hist
+
+
 def get_joint_hist(
     xb_bin: xr.DataArray,
     yb_bin: xr.DataArray,
@@ -396,7 +410,7 @@ def get_joint_hist(
 ) -> xr.DataArray:
     """Compute 2D joint histogram.
 
-    Counts the number of observations in each (x_bin, y_bin) combination.
+    Counts the number of observations in each (ix_bin, iy_bin) combination.
 
     Parameters
     ----------
@@ -414,61 +428,47 @@ def get_joint_hist(
     Returns
     -------
     xr.DataArray
-        2D histogram counts with dimensions ('x_bin', 'y_bin').
+        2D histogram counts with dimensions ('ix_bin', 'iy_bin').
         Contains the count of observations in each bin combination.
 
     Notes
     -----
-    Uses np.histogram2d for efficient computation.
+    Uses a numba-JIT-compiled function for efficient computation.
     Bins with no observations have a count of 0.
     """
 
-    # Define bin edges (n+1 edges for n bins)
-    xb_edge = np.arange(xnb + 1)
-    yb_edge = np.arange(ynb + 1)
-
-    def _hist2d_core(x_data: np.ndarray, y_data: np.ndarray) -> np.ndarray:
-        """Core function to compute 2D histogram."""
-        valid_mask = ~(np.isnan(x_data) | np.isnan(y_data))
-        if not np.any(valid_mask):
-            # Return zeros if all NaN (xnb edges creates xnb bins)
-            return np.zeros((xnb, ynb))
-
-        hist, _, _ = np.histogram2d(
-            x_data[valid_mask],
-            y_data[valid_mask],
-            bins=[xb_edge, yb_edge],
-        )
-        return hist.T
-
     joint_hist = xr.apply_ufunc(
-        _hist2d_core,
+        lambda x_data, y_data: _hist2d_numba(
+            x_data.flatten(), y_data.flatten(), xnb, ynb
+        ),
         xb_bin,
         yb_bin,
         input_core_dims=[agg_dims, agg_dims],
-        output_core_dims=[["x_bin", "y_bin"]],
+        output_core_dims=[["ix_bin", "iy_bin"]],
         vectorize=True,
         dask="parallelized",
         output_dtypes=[float],
         dask_gufunc_kwargs={
             "allow_rechunk": True,
             "output_sizes": {
-                "x_bin": xnb,
-                "y_bin": ynb,
+                "ix_bin": xnb,
+                "iy_bin": ynb,
             },
         },
     )
 
-    joint_dist = joint_hist.assign_coords(
+    joint_hist = joint_hist.assign_coords(
         {
-            "x_bin": xb_edge[:-1],
-            "y_bin": yb_edge[:-1],
+            "ix_bin": np.arange(xnb),
+            "iy_bin": np.arange(ynb),
         }
     )
-    joint_dist.name = "joint_dist"
-    joint_dist.attrs = {"long_name": "joint distribution", "units": "count"}
+    joint_hist.ix_bin.attrs = {"long_name": "x bin indices"}
+    joint_hist.iy_bin.attrs = {"long_name": "y bin indices"}
+    joint_hist.name = "joint_hist"
+    joint_hist.attrs = {"long_name": "joint distribution", "units": "count"}
 
-    return joint_dist
+    return joint_hist.T
 
 
 def get_quantile_binned_mean(
@@ -477,8 +477,9 @@ def get_quantile_binned_mean(
     yb: xr.DataArray,
     xnb: int,
     ynb: int,
+    quantile_dims: Sequence[str] = ("lat", "lon"),
     agg_dims: Sequence[str] = ("gridcell"),
-) -> QBinnedMean:
+) -> xr.Dataset:
     """Compute quantile-binned means and joint distribution.
 
     This function bins data into quantile-based bins and computes both the
@@ -499,18 +500,23 @@ def get_quantile_binned_mean(
         Number of quantile bins for xb.
     ynb : int
         Number of quantile bins for yb.
+    quantile_dims : list of str, optional
+        Dimensions to collapse into a single gridcell dimension for computing
+        the quantiles. Default is ['lat', 'lon'].
     agg_dims : list of str, optional
         Dimensions to aggregate over when computing statistics.
         Default is ['gridcell'].
 
     Returns
     -------
-    joint_hist : xr.DataArray
-        2D histogram showing the count of observations in each (xb, yb) bin.
-        Has dimensions ('x_bin', 'y_bin').
-    binned_mean : xr.DataArray
-        2D array of mean Z values for each (xb, yb) bin.
-        Has dimensions ('x_bin', 'y_bin').
+    xr.Dataset
+        A dataset containing the following variables:
+        - xb_qedge: Quantile edges for x binning variable
+        - yb_qedge: Quantile edges for y binning variable  
+        - xb_bin: Bin assignments for x variable
+        - yb_bin: Bin assignments for y variable
+        - joint_hist: 2D histogram showing count of observations in each bin
+        - binned_mean: 2D array of mean Z values for each bin
 
     Notes
     -----
@@ -523,23 +529,25 @@ def get_quantile_binned_mean(
 
     Bins are defined by quantiles, so each bin contains approximately
     the same number of observations (for the binning variables).
-
+    
     Examples
     --------
-    >>> # Compute temperature binned by precipitation and soil moisture
-    >>> hist, mean_temp = quantile_binned_mean(
-    ...     Z=temperature,
-    ...     xb=precipitation,
-    ...     yb=soil_moisture,
+    >>> # Compute evapotranspiration binned by LAI and soil moisture
+    >>> result = get_quantile_binned_mean(
+    ...     Z=et,
+    ...     xb=lai,
+    ...     yb=sm,
     ...     xnb=10,
-    ...     ynb=10
+    ...     ynb=10,
     ... )
+    >>> hist = result.joint_hist
+    >>> mean_et = result.binned_mean
     """
 
     # Stack lat/lon into a single gridcell dimension for aggregation
-    Z_s = Z.stack(gridcell=["lat", "lon"])
-    xb_s = xb.stack(gridcell=["lat", "lon"])
-    yb_s = yb.stack(gridcell=["lat", "lon"])
+    Z_s = Z.stack(gridcell=quantile_dims)
+    xb_s = xb.stack(gridcell=quantile_dims)
+    yb_s = yb.stack(gridcell=quantile_dims)
 
     # Compute the quantile edges
     xb_qedge = get_quantiles(xb_s, xnb, "gridcell")
@@ -555,11 +563,28 @@ def get_quantile_binned_mean(
     # Compute the binned mean
     binned_mean = get_binned_mean2d(Z_s, xb_bin, yb_bin, xnb, ynb, agg_dims=agg_dims)
 
-    return QBinnedMean(
-        xb_qedge=xb_qedge,
-        yb_qedge=yb_qedge,
-        xb_bin=xb_bin,
-        yb_bin=yb_bin,
-        joint_hist=joint_hist,
-        binned_mean=binned_mean,
+    # Create a combined dataset
+    result = xr.Dataset(
+        {
+            "binned_mean": binned_mean,
+            "joint_hist": joint_hist,
+            "xb_bin": xb_bin.unstack(),
+            "yb_bin": yb_bin.unstack(),
+            "xb_qedge": xb_qedge.rename({"quantile": "x_qedge"}),
+            "yb_qedge": yb_qedge.rename({"quantile": "y_qedge"}),
+        }
     )
+    result.xb_bin.attrs["long_name"] = "quantile indices for x binning variable"
+    result.yb_bin.attrs["long_name"] = "quantile indices for y binning variable"
+    result.xb_bin.attrs["units"] = "index"
+    result.yb_bin.attrs["units"] = "index"
+    result.xb_qedge.attrs["long_name"] = "quantile edges for x binning variable in data units"
+    result.yb_qedge.attrs["long_name"] = "quantile edges for y binning variable in data units"
+    result.x_qedge.attrs["long_name"] = "quantile edges for x binning variable"
+    result.y_qedge.attrs["long_name"] = "quantile edges for y binning variable"
+   
+    for var_to_drop in ["ltype", "landunit"]:
+        if var_to_drop in result.variables:
+            result = result.drop_vars(var_to_drop)
+
+    return result
