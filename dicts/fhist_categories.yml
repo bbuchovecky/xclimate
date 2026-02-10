@@ -1,0 +1,83 @@
+pcat_abbrv:
+  bl: Boundary layer and roughness
+  ce: Canopy evaporation
+  df: Default
+  ps: Photosynthesis
+  sl: Soil hydrology
+  ta: Temperature acclimation
+  wu: Plant water use
+pcat_color:
+  bl: '#75147C'
+  ce: '#97CCE8'
+  df: '#5C5C5C'
+  ps: '#55AFA9'
+  sl: '#0069CC'
+  ta: '#E69200'
+  wu: '#458933'
+pcat_group:
+  bl:
+  - '1'
+  - '2'
+  ce:
+  - '5'
+  - '6'
+  df:
+  - '0'
+  ps:
+  - '13'
+  - '14'
+  - '19'
+  - '20'
+  - '21'
+  - '22'
+  - '25'
+  - '26'
+  sl:
+  - '3'
+  - '4'
+  - '7'
+  - '8'
+  ta:
+  - '23'
+  - '24'
+  - '27'
+  - '28'
+  wu:
+  - '9'
+  - '10'
+  - '11'
+  - '12'
+  - '15'
+  - '16'
+  - '17'
+  - '18'
+pcat_group_inv:
+  '0': df
+  '1': bl
+  '10': wu
+  '11': wu
+  '12': wu
+  '13': ps
+  '14': ps
+  '15': wu
+  '16': wu
+  '17': wu
+  '18': wu
+  '19': ps
+  '2': bl
+  '20': ps
+  '21': ps
+  '22': ps
+  '23': ta
+  '24': ta
+  '25': ps
+  '26': ps
+  '27': ta
+  '28': ta
+  '3': sl
+  '4': sl
+  '5': ce
+  '6': ce
+  '7': sl
+  '8': sl
+  '9': wu

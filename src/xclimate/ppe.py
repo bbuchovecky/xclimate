@@ -13,7 +13,7 @@ PKG_DIR = Path(__file__).parent.parent.parent
 
 
 @lru_cache(maxsize=4)
-def load_member_id_map(ppe="fhist") -> dict:
+def load_member_id_dict(ppe="fhist") -> dict:
     """Load a member map dictionary from the YAML file."""
     member_id_map_path = PKG_DIR / f"dicts/{ppe}_members.yml"
     with open(member_id_map_path, "r") as f:
@@ -35,7 +35,7 @@ def get_member_info(
     ppe: str = "fhist",
 ) -> Tuple | List[Tuple]:
     """Get the tuple (member_id, parameter_name, minmax)."""
-    member_id_map = load_member_id_map(ppe)
+    member_id_map = load_member_id_dict(ppe)
     inverted = invert_member_id_map(member_id_map)
 
     # Convert all inputs to list
@@ -77,3 +77,41 @@ def get_member_name(
     if isinstance(info, List):
         return [delimiter.join(str(x) for x in i) for i in info]
     return delimiter.join(str(x) for x in info)
+
+
+@lru_cache(maxsize=4)
+def load_member_cat_dict(ppe="fhist") -> dict:
+    """Load a member category dictionary from the YAML file."""
+    member_cat_path = PKG_DIR / f"dicts/{ppe}_categories.yml"
+    with open(member_cat_path, "r") as f:
+        member_cat = yaml.safe_load(f)
+    return member_cat
+
+
+def get_member_cat_name(
+    member_id: int | float | str | List[int | float | str] | np.ndarray | xr.DataArray,
+    ppe: str = "fhist",
+) -> str | List[str]:
+    """Get the parameter functional category for a given member."""
+    cat = load_member_cat_dict(ppe)
+    info = get_member_info(member_id, no_id=False, ppe=ppe)
+
+    if isinstance(info, List):
+        return [cat["pcat_abbrv"][cat["pcat_group_inv"][str(i[0])]] for i in info]
+    return cat["pcat_abbrv"][cat["pcat_group_inv"][str(info[0])]]
+
+
+def get_member_cat_color(
+    member_id: int | float | str | List[int | float | str] | np.ndarray | xr.DataArray,
+    ppe: str = "fhist",
+) -> str | List[str]:
+    """Get the color for the parameter functional category of a given member."""
+    cat = load_member_cat_dict(ppe)
+    info = get_member_info(member_id, no_id=False, ppe=ppe)
+
+    if isinstance(info, List):
+        abbrv = [(cat["pcat_group_inv"][str(i[0])]) for i in info]
+        return [cat["pcat_color"][a] for a in abbrv]
+    
+    return cat["pcat_color"][cat["pcat_group_inv"][str(info[0])]]
+    

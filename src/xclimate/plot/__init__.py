@@ -7,6 +7,8 @@ from . import ensemble
 from .helpers import (
     whiten,
     center_axis_at_zero,
+    add_orphan_xlabel,
+    add_orphan_xticklabels,
 )
 
 from .ensemble import (
@@ -24,6 +26,8 @@ from .zonal_violin import plot_zonal_violin
 __all__ = [
     "ensemble",
     "whiten",
+    "add_orphan_xlabel",
+    "add_orphan_xticklabels",
     "center_axis_at_zero",
     "plot_ensemble_timeseries",
     "plot_ensemble_zonal",
