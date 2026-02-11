@@ -12,6 +12,8 @@ from . import regression
 
 from . import multiple_testing
 
+from . import science
+
 from .daskhelper import (
     is_dask_available,
     create_dask_cluster,
@@ -33,6 +35,7 @@ from .binned import (
     get_bins,
     get_joint_hist,
     get_quantiles,
+    compute_bin_stats,
 )
 
 from .load import (
@@ -48,6 +51,7 @@ __all__ = [
     "regression",
     "multiple_testing",
     "binned",
+    "science",
 
     "is_dask_available",
     "create_dask_cluster",
@@ -74,4 +78,5 @@ __all__ = [
     "get_bins",
     "get_joint_hist",
     "get_quantiles",
+    "compute_bin_stats",
 ]
