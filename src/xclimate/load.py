@@ -130,7 +130,7 @@ def load_coupled_fhist_ppe(
     chunk: bool | dict = False,
 ) -> xr.Dataset:
     """
-    Load variables from the coupled F-HIST PPE.
+    Load variables from the coupled FHIST PPE.
 
     Parameters
     ----------
